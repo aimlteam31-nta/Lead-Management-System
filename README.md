@@ -7,6 +7,8 @@ route, and nurture leads automatically.
 
 ##  Live Demo
 
+https://drive.google.com/file/d/1MvFRhXtyDIxC63wPRI2Ck3JOInqCIJM7/view?usp=sharing
+
 - **Lead Form:** https://odoo-lead-submittionform.netlify.app/
 - **CRM Dashboard:** Odoo 17 Community (Self-hosted)
 - **Automation Engine:** n8n (Self-hosted)
