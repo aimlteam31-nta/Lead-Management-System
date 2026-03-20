@@ -1,0 +1,1300 @@
+{
+  "name": "Odoo_CRM_Fixed_Production_Final",
+  "nodes": [
+    {
+      "parameters": {
+        "jsCode": "const webhookData = $('Webhook - Receive Lead').first().json;\nconst body = webhookData.body || webhookData;\nconst trim = (v) => (v ? String(v).trim() : '');\nfunction normalizePhone(phone) {\n  let p = trim(phone).replace(/\\s+/g, '').replace(/-/g, '');\n  if (p.startsWith('0')) p = '+92' + p.slice(1);\n  if (!p.startsWith('+')) p = '+92' + p;\n  return p;\n}\nfunction timelineToDays(tl) {\n  const t = trim(tl).toLowerCase();\n  if (t.includes('today') || t.includes('urgent') || t.includes('asap')) return 1;\n  if (t.includes('this week') || t.includes('3 day') || t.includes('few day')) return 7;\n  if (t.includes('next week') || t.includes('2 week')) return 14;\n  if (t.includes('this month') || t.includes('month')) return 30;\n  if (t.includes('next month')) return 60;\n  return 90;\n}\nfunction parseBudget(b) {\n  if (!b) return 0;\n  return parseFloat(String(b).replace(/[^0-9.]/g, '')) || 0;\n}\nconst fullName        = trim(body.full_name || body.fullName || body.name || '');\nconst email           = trim(body.email || '').toLowerCase();\nconst phone           = normalizePhone(body.phone || body.phone_number || '');\nconst company         = trim(body.company || body.company_name || '');\nconst budget          = parseBudget(body.budget);\nconst requirement     = trim(body.requirement || body.message || '');\nconst timeline        = trim(body.timeline || '');\nconst timelineDays    = timelineToDays(timeline);\nconst decRaw          = trim(body.decision_maker || body.is_decision_maker || 'no').toLowerCase();\nconst isDecisionMaker = (decRaw === 'yes' || decRaw === 'true' || decRaw === '1');\nconst source          = trim(body.source || body.how_did_you_find_us || 'Direct');\nconst submittedAt     = new Date().toISOString();\nif (!fullName) throw new Error('Validation: full_name required');\nif (!email || !email.includes('@')) throw new Error('Validation: valid email required');\nif (!phone || phone.length < 10) throw new Error('Validation: valid phone required');\nreturn [{ json: { fullName, email, phone, company, budget, requirement, timeline, timelineDays, isDecisionMaker, source, submittedAt } }];"
+      },
+      "id": "0ba6bf55-3a81-4178-adba-e3a9147da14d",
+      "name": "Code - Format & Validate Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        992,
+        624
+      ]
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "gpt-4o-mini",
+          "mode": "list",
+          "cachedResultName": "GPT-4o Mini"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "You are a B2B lead scoring expert. Always respond with valid JSON only. No markdown. No explanation. Just the JSON object.",
+              "role": "system"
+            },
+            {
+              "content": "=Score this lead 0-100. Return ONLY valid JSON: {\"score\": 75, \"category\": \"Warm\", \"reason\": \"short reason\"}\n\nScoring (100 pts total):\n- Budget (0-25): Rs. {{ $json.budget }} — 500k+=25pts, 100k+=20pts, 50k+=15pts, 10k+=10pts, below=5pts\n- Timeline urgency (0-25): {{ $json.timelineDays }} days — 1day=25pts, 7days=20pts, 14days=15pts, 30days=10pts, 90days=5pts\n- Requirement detail (0-20): {{ $json.requirement }} — specific=20pts, vague=10pts\n- Company size (0-15): {{ $json.company }} — large=15pts, medium=10pts, small=5pts\n- Decision maker (0-15): {{ $json.isDecisionMaker }} — Yes=15pts, No=0pts\n\nRules: 70-100=Hot, 50-69=Warm, 0-49=Cold\n\nBe honest in reason. Mention actual budget. Do not call low budget strong."
+            }
+          ]
+        },
+        "options": {
+          "maxTokens": 150,
+          "temperature": 0.1
+        }
+      },
+      "id": "30fd2117-c476-4ca2-97ee-939850ee7d2e",
+      "name": "OpenAI - AI Lead Scoring",
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 1.8,
+      "position": [
+        1216,
+        624
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": "PQfPyqdpbAK30RzL",
+          "name": "OpenAi account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const lead = $('Code - Format & Validate Data').first().json;\nconst raw = $input.first().json?.message?.content\n          || $input.first().json?.choices?.[0]?.message?.content\n          || $input.first().json?.text || '{}';\nlet ai;\ntry {\n  ai = JSON.parse(raw.replace(/```json|```/gi, '').trim());\n} catch(e) {\n  ai = { score: 50, category: 'Warm', reason: 'AI parse failed - default assigned' };\n}\nconst score    = Math.min(100, Math.max(0, parseInt(ai.score) || 50));\nconst category = score >= 70 ? 'Hot' : score >= 50 ? 'Warm' : 'Cold';\nconst reason   = ai.reason || 'No reason provided';\n\nconst salesReps = [\n  { name: 'Nazish Jahan', phone: 'whatsapp:+923116004886', email: 'nazishjahan22@gmail.com', role: 'Senior', odooId: 9 },\n  { name: 'Mehran Ali',   phone: 'whatsapp:+923007045809', email: 'aliawan8694@gmail.com',   role: 'Junior', odooId: 8 }\n];\n\nconst assignedRep = score >= 70\n  ? salesReps.find(r => r.role === 'Senior')\n  : salesReps.find(r => r.role === 'Junior');\n\nconst assignedTier  = score >= 70 ? 'Senior Sales Rep' : score >= 50 ? 'Junior Sales Rep' : 'Email Nurture';\nconst responseTime  = score >= 70 ? '1 hour' : score >= 50 ? '24 hours' : 'Automated';\nconst odooPriority  = score >= 70 ? '2' : score >= 50 ? '1' : '0';\n\nconst odooDescription = `AI Score: ${score}/100 | Category: ${category}\\nReason: ${reason}\\nRequirement: ${lead.requirement}\\nBudget: Rs. ${lead.budget}\\nTimeline: ${lead.timeline}\\nDecision Maker: ${lead.isDecisionMaker}\\nSource: ${lead.source}\\nAssigned To: ${assignedRep?.name} (${assignedTier})\\nResponse Time: ${responseTime}\\nSubmitted: ${lead.submittedAt}`;\n\nreturn [{ json: {\n  fullName:         lead.fullName,\n  email:            lead.email,\n  phone:            lead.phone,\n  company:          lead.company,\n  budget:           lead.budget,\n  requirement:      lead.requirement,\n  timeline:         lead.timeline,\n  timelineDays:     lead.timelineDays,\n  isDecisionMaker:  lead.isDecisionMaker,\n  source:           lead.source,\n  submittedAt:      lead.submittedAt,\n  aiScore:          score,\n  aiCategory:       category,\n  aiReason:         reason,\n  odooDescription,\n  odooUserId:       assignedRep?.odooId || 9,\n  assignedTier,\n  assignedRepName:  assignedRep?.name  || 'Team Lead',\n  assignedRepPhone: assignedRep?.phone || 'whatsapp:+923116004886',\n  assignedRepEmail: assignedRep?.email || 'nazishjahan22@gmail.com',\n  responseTime,\n  odooPriority\n} }];"
+      },
+      "id": "eb724a45-958a-4754-8c13-dd3a1e92d3fb",
+      "name": "Code - Parse AI Score",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1568,
+        624
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "custom",
+        "customResource": "crm.lead",
+        "fieldsToCreateOrUpdate": {
+          "fields": [
+            {
+              "fieldName": "name",
+              "fieldValue": "={{ $json.fullName }}"
+            },
+            {
+              "fieldName": "email_from",
+              "fieldValue": "={{ $json.email }}"
+            },
+            {
+              "fieldName": "phone",
+              "fieldValue": "={{ $json.phone }}"
+            },
+            {
+              "fieldName": "partner_name",
+              "fieldValue": "={{ $json.company }}"
+            },
+            {
+              "fieldName": "priority",
+              "fieldValue": "={{ $json.odooPriority }}"
+            },
+            {
+              "fieldName": "user_id",
+              "fieldValue": "={{ $json.odooUserId }}"
+            },
+            {
+              "fieldName": "description",
+              "fieldValue": "={{ $json.odooDescription }}"
+            },
+            {
+              "fieldName": "expected_revenue",
+              "fieldValue": "={{ $json.budget }}"
+            }
+          ]
+        }
+      },
+      "id": "402b94fb-dbc6-4aa9-9352-54a5657e13e3",
+      "name": "Odoo - Create Lead in CRM",
+      "type": "n8n-nodes-base.odoo",
+      "typeVersion": 1,
+      "position": [
+        1792,
+        624
+      ],
+      "retryOnFail": true,
+      "credentials": {
+        "odooApi": {
+          "id": "1ghSWW2g3VYDQNPV",
+          "name": "Odoo account"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "hot-cond",
+              "leftValue": "={{ $('Code - Parse AI Score').item.json.aiScore }}",
+              "rightValue": 70,
+              "operator": {
+                "type": "number",
+                "operation": "gte"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "ed3db567-2650-47ab-a01d-b6a55c0b6b0e",
+      "name": "IF - Is Hot Lead?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        2016,
+        528
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "warm-cond",
+              "leftValue": "={{ $('Code - Parse AI Score').item.json.aiScore }}",
+              "rightValue": 50,
+              "operator": {
+                "type": "number",
+                "operation": "gte"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "7bf3abde-a096-4375-8a8b-9a58ebda5b01",
+      "name": "IF - Is Warm Lead?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        2240,
+        720
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "hot-msg",
+              "name": "whatsappMessage",
+              "value": "=🔥 *URGENT HOT LEAD* 🔥\n\n👤 *Name:* {{ $('Code - Parse AI Score').item.json.fullName }}\n📞 *Phone:* {{ $('Code - Parse AI Score').item.json.phone }}\n🏢 *Company:* {{ $('Code - Parse AI Score').item.json.company }}\n📧 *Email:* {{ $('Code - Parse AI Score').item.json.email }}\n💰 *Budget:* Rs. {{ $('Code - Parse AI Score').item.json.budget }}\n⏰ *Timeline:* {{ $('Code - Parse AI Score').item.json.timeline }}\n📋 *Need:* {{ $('Code - Parse AI Score').item.json.requirement }}\n🤖 *AI Score:* {{ $('Code - Parse AI Score').item.json.aiScore }}/100 — HOT 🔥\n📝 *Reason:* {{ $('Code - Parse AI Score').item.json.aiReason }}\n👨‍💼 *Assigned To:* {{ $('Code - Parse AI Score').item.json.assignedRepName }}\n⚡ *CALL WITHIN 1 HOUR!*",
+              "type": "string"
+            },
+            {
+              "id": "hot-wa-to",
+              "name": "whatsappTo",
+              "value": "={{ $('Code - Parse AI Score').item.json.assignedRepPhone }}",
+              "type": "string"
+            },
+            {
+              "id": "hot-rep-email",
+              "name": "repEmail",
+              "value": "={{ $('Code - Parse AI Score').item.json.assignedRepEmail }}",
+              "type": "string"
+            },
+            {
+              "id": "hot-rep-name",
+              "name": "repName",
+              "value": "={{ $('Code - Parse AI Score').item.json.assignedRepName }}",
+              "type": "string"
+            },
+            {
+              "id": "hot-subject",
+              "name": "repEmailSubject",
+              "value": "=🔥 URGENT HOT LEAD — {{ $('Code - Parse AI Score').item.json.fullName }} (Score: {{ $('Code - Parse AI Score').item.json.aiScore }}/100)",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "aa11d087-9980-4bb2-aca6-5c95908a3fa3",
+      "name": "Set - Hot Lead Message",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        2464,
+        96
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "warm-msg",
+              "name": "whatsappMessage",
+              "value": "=🟡 *WARM LEAD* 🟡\n\n👤 *Name:* {{ $('Code - Parse AI Score').item.json.fullName }}\n📞 *Phone:* {{ $('Code - Parse AI Score').item.json.phone }}\n🏢 *Company:* {{ $('Code - Parse AI Score').item.json.company }}\n📧 *Email:* {{ $('Code - Parse AI Score').item.json.email }}\n💰 *Budget:* Rs. {{ $('Code - Parse AI Score').item.json.budget }}\n⏰ *Timeline:* {{ $('Code - Parse AI Score').item.json.timeline }}\n📋 *Need:* {{ $('Code - Parse AI Score').item.json.requirement }}\n🤖 *AI Score:* {{ $('Code - Parse AI Score').item.json.aiScore }}/100 — WARM 🟡\n📝 *Reason:* {{ $('Code - Parse AI Score').item.json.aiReason }}\n👨‍💼 *Assigned To:* {{ $('Code - Parse AI Score').item.json.assignedRepName }}\n📅 *Follow up within 24 hours*",
+              "type": "string"
+            },
+            {
+              "id": "warm-wa-to",
+              "name": "whatsappTo",
+              "value": "={{ $('Code - Parse AI Score').item.json.assignedRepPhone }}",
+              "type": "string"
+            },
+            {
+              "id": "warm-rep-email",
+              "name": "repEmail",
+              "value": "={{ $('Code - Parse AI Score').item.json.assignedRepEmail }}",
+              "type": "string"
+            },
+            {
+              "id": "warm-rep-name",
+              "name": "repName",
+              "value": "={{ $('Code - Parse AI Score').item.json.assignedRepName }}",
+              "type": "string"
+            },
+            {
+              "id": "warm-subject",
+              "name": "repEmailSubject",
+              "value": "=🟡 NEW WARM LEAD — {{ $('Code - Parse AI Score').item.json.fullName }} (Score: {{ $('Code - Parse AI Score').item.json.aiScore }}/100)",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "9d08dd14-5c6a-4727-bde0-d603048a4f46",
+      "name": "Set - Warm Lead Message",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        2464,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "cold-msg",
+              "name": "whatsappMessage",
+              "value": "=❄️ *COLD LEAD - Nurture Started* ❄️\n\n👤 *Name:* {{ $('Code - Parse AI Score').item.json.fullName }}\n📞 *Phone:* {{ $('Code - Parse AI Score').item.json.phone }}\n🏢 *Company:* {{ $('Code - Parse AI Score').item.json.company }}\n📧 *Email:* {{ $('Code - Parse AI Score').item.json.email }}\n💰 *Budget:* Rs. {{ $('Code - Parse AI Score').item.json.budget }}\n🤖 *AI Score:* {{ $('Code - Parse AI Score').item.json.aiScore }}/100 — COLD ❄️\n📝 *Reason:* {{ $('Code - Parse AI Score').item.json.aiReason }}\n📧 Email nurture sequence started (4 emails over 14 days)",
+              "type": "string"
+            },
+            {
+              "id": "cold-wa-to",
+              "name": "whatsappTo",
+              "value": "={{ $('Code - Parse AI Score').item.json.assignedRepPhone }}",
+              "type": "string"
+            },
+            {
+              "id": "cold-rep-email",
+              "name": "repEmail",
+              "value": "={{ $('Code - Parse AI Score').item.json.assignedRepEmail }}",
+              "type": "string"
+            },
+            {
+              "id": "cold-rep-name",
+              "name": "repName",
+              "value": "={{ $('Code - Parse AI Score').item.json.assignedRepName }}",
+              "type": "string"
+            },
+            {
+              "id": "cold-subject",
+              "name": "repEmailSubject",
+              "value": "=❄️ COLD LEAD — {{ $('Code - Parse AI Score').item.json.fullName }} (Score: {{ $('Code - Parse AI Score').item.json.aiScore }}/100) — Nurture Started",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "653afc0e-4e3d-4491-b4c6-6eac831574da",
+      "name": "Set - Cold Lead Message",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        2464,
+        816
+      ]
+    },
+    {
+      "parameters": {
+        "from": "+14155238886",
+        "to": "=+923279586480",
+        "toWhatsapp": true,
+        "message": "={{ $json.whatsappMessage }}",
+        "options": {}
+      },
+      "id": "061b895e-62e3-4b16-ba99-06eb2191c73b",
+      "name": "Twilio - WhatsApp to Sales Rep",
+      "type": "n8n-nodes-base.twilio",
+      "typeVersion": 1,
+      "position": [
+        2688,
+        432
+      ],
+      "credentials": {
+        "twilioApi": {
+          "id": "PKYxVqPwZ46Rm2wP",
+          "name": "Twilio account 3"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $('Code - Parse AI Score').item.json.assignedRepEmail }}",
+        "subject": "={{ $json.repEmailSubject }}",
+        "message": "=<html><body style=\"font-family:Arial,sans-serif;color:#333;max-width:600px;margin:auto;padding:20px;background:#f9f9f9;\"><div style=\"background:#fff;border-radius:10px;padding:30px;box-shadow:0 2px 10px rgba(0,0,0,0.1);\"><div style=\"background:#c0392b;padding:20px;border-radius:8px;margin-bottom:25px;text-align:center;\"><h1 style=\"color:white;margin:0;font-size:22px;\">🎯 New Lead Assigned To You!</h1><p style=\"color:#ffcccc;margin:5px 0 0 0;\">Please take immediate action</p></div><p>Dear <strong>{{ $('Code - Parse AI Score').item.json.assignedRepName }}</strong>,</p><p>A new lead has been assigned to you.</p><table style=\"width:100%;border-collapse:collapse;margin:20px 0;\"><tr style=\"background:#c0392b;color:white;\"><td colspan=\"2\" style=\"padding:12px;font-size:16px;text-align:center;\"><strong>🤖 AI Score: {{ $('Code - Parse AI Score').item.json.aiScore }}/100 — {{ $('Code - Parse AI Score').item.json.aiCategory }}</strong></td></tr><tr><td style=\"padding:10px;border:1px solid #ddd;background:#f9f9f9;\"><strong>👤 Name</strong></td><td style=\"padding:10px;border:1px solid #ddd;\">{{ $('Code - Parse AI Score').item.json.fullName }}</td></tr><tr><td style=\"padding:10px;border:1px solid #ddd;background:#f9f9f9;\"><strong>📞 Phone</strong></td><td style=\"padding:10px;border:1px solid #ddd;\">{{ $('Code - Parse AI Score').item.json.phone }}</td></tr><tr><td style=\"padding:10px;border:1px solid #ddd;background:#f9f9f9;\"><strong>📧 Email</strong></td><td style=\"padding:10px;border:1px solid #ddd;\">{{ $('Code - Parse AI Score').item.json.email }}</td></tr><tr><td style=\"padding:10px;border:1px solid #ddd;background:#f9f9f9;\"><strong>🏢 Company</strong></td><td style=\"padding:10px;border:1px solid #ddd;\">{{ $('Code - Parse AI Score').item.json.company }}</td></tr><tr><td style=\"padding:10px;border:1px solid #ddd;background:#f9f9f9;\"><strong>💰 Budget</strong></td><td style=\"padding:10px;border:1px solid #ddd;\">Rs. {{ $('Code - Parse AI Score').item.json.budget }}</td></tr><tr><td style=\"padding:10px;border:1px solid #ddd;background:#f9f9f9;\"><strong>📋 Requirement</strong></td><td style=\"padding:10px;border:1px solid #ddd;\">{{ $('Code - Parse AI Score').item.json.requirement }}</td></tr><tr><td style=\"padding:10px;border:1px solid #ddd;background:#f9f9f9;\"><strong>⏰ Timeline</strong></td><td style=\"padding:10px;border:1px solid #ddd;\">{{ $('Code - Parse AI Score').item.json.timeline }}</td></tr><tr style=\"background:#fff3cd;\"><td style=\"padding:10px;border:1px solid #ddd;\"><strong>⚡ Response Required</strong></td><td style=\"padding:10px;border:1px solid #ddd;\"><strong>Within {{ $('Code - Parse AI Score').item.json.responseTime }}!</strong></td></tr><tr><td style=\"padding:10px;border:1px solid #ddd;background:#f9f9f9;\"><strong>🧠 AI Reason</strong></td><td style=\"padding:10px;border:1px solid #ddd;\">{{ $('Code - Parse AI Score').item.json.aiReason }}</td></tr></table><p style=\"color:#888;font-size:12px;text-align:center;\">Automated notification — Lead Management System</p></div></body></html>",
+        "options": {}
+      },
+      "id": "e960b66c-a107-4242-8b73-b1b80bea4382",
+      "name": "Gmail - Email to Sales Rep",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        2688,
+        240
+      ],
+      "webhookId": "d98ad43f-e566-4412-bcf2-50e0a6e56773",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "gU8lbcMJEtRoLlTS",
+          "name": "Gmail account MTK"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $('Code - Parse AI Score').item.json.email }}",
+        "subject": "=✅ We received your inquiry, {{ $('Code - Parse AI Score').item.json.fullName }}!",
+        "message": "=<html><body style=\"font-family:Arial,sans-serif;color:#333;max-width:600px;margin:auto;padding:20px;\"><h2 style=\"color:#2e75b6;\">Thank You for Reaching Out! 🙏</h2><p>Dear <strong>{{ $('Code - Parse AI Score').item.json.fullName }}</strong>,</p><p>We received your inquiry. Our team will contact you soon.</p><table style=\"width:100%;border-collapse:collapse;margin:20px 0;\"><tr style=\"background:#f0f4f8;\"><td style=\"padding:8px;border:1px solid #ddd;\"><strong>Name</strong></td><td style=\"padding:8px;border:1px solid #ddd;\">{{ $('Code - Parse AI Score').item.json.fullName }}</td></tr><tr><td style=\"padding:8px;border:1px solid #ddd;\"><strong>Company</strong></td><td style=\"padding:8px;border:1px solid #ddd;\">{{ $('Code - Parse AI Score').item.json.company }}</td></tr><tr style=\"background:#f0f4f8;\"><td style=\"padding:8px;border:1px solid #ddd;\"><strong>Requirement</strong></td><td style=\"padding:8px;border:1px solid #ddd;\">{{ $('Code - Parse AI Score').item.json.requirement }}</td></tr><tr><td style=\"padding:8px;border:1px solid #ddd;\"><strong>Your Rep</strong></td><td style=\"padding:8px;border:1px solid #ddd;\">{{ $('Code - Parse AI Score').item.json.assignedRepName }}</td></tr><tr style=\"background:#f0f4f8;\"><td style=\"padding:8px;border:1px solid #ddd;\"><strong>Response Time</strong></td><td style=\"padding:8px;border:1px solid #ddd;\">{{ $('Code - Parse AI Score').item.json.responseTime }}</td></tr></table><p style=\"color:#888;font-size:12px;\">This is an automated message.</p></body></html>",
+        "options": {}
+      },
+      "id": "35dd44bd-14cf-41e6-8701-e1e1ecdc57c0",
+      "name": "Gmail - Email 1 Confirmation to Customer",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        2688,
+        624
+      ],
+      "webhookId": "6a17993c-6e03-49c1-b617-a7064ecbd840",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "gU8lbcMJEtRoLlTS",
+          "name": "Gmail account MTK"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "amount": 3,
+        "unit": "days"
+      },
+      "id": "8dea2a47-dc35-450c-bc13-36c5d31a55ec",
+      "name": "Wait - 3 Days",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        2912,
+        624
+      ],
+      "webhookId": "85a5987b-293d-4fb1-86be-7a11c2fd18c1"
+    },
+    {
+      "parameters": {
+        "resource": "custom",
+        "customResource": "crm.lead",
+        "operation": "getAll",
+        "limit": 1,
+        "options": {
+          "fieldsList": [
+            "id",
+            "stage_id",
+            "probability",
+            "active"
+          ]
+        },
+        "filterRequest": {
+          "filter": [
+            {
+              "fieldName": "email_from",
+              "value": "={{ $('Code - Parse AI Score').item.json.email }}"
+            }
+          ]
+        }
+      },
+      "id": "1bae77d2-a57e-4808-bef7-241e99a23200",
+      "name": "Odoo - Check Lead Status (Day 3)",
+      "type": "n8n-nodes-base.odoo",
+      "typeVersion": 1,
+      "position": [
+        3136,
+        624
+      ],
+      "credentials": {
+        "odooApi": {
+          "id": "1ghSWW2g3VYDQNPV",
+          "name": "Odoo account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const leads = $input.all();\nlet shouldStop = false;\nlet status = 'Active';\nif (leads.length === 0) {\n  shouldStop = false; status = 'Not Found';\n} else {\n  const lead = leads[0].json;\n  if (lead.probability >= 100) { shouldStop = true; status = 'Won'; }\n  else if (lead.active === false) { shouldStop = true; status = 'Lost'; }\n  else { shouldStop = false; status = 'Active'; }\n}\nreturn [{ json: { shouldStop, status, email: $('Code - Parse AI Score').item.json.email, fullName: $('Code - Parse AI Score').item.json.fullName } }];"
+      },
+      "id": "3978582b-e3c1-4d45-ac9e-84fdcc6bf637",
+      "name": "Code - Parse Lead Status (Day 3)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3360,
+        624
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "stop-cond-d3",
+              "leftValue": "={{ $json.shouldStop }}",
+              "rightValue": false,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "324d1207-5059-4297-85c5-fe35d6d87853",
+      "name": "IF - Continue Emails? (Day 3)",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        3584,
+        624
+      ]
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $('Code - Parse AI Score').item.json.email }}",
+        "subject": "=Following up on your inquiry - {{ $('Code - Parse AI Score').item.json.fullName }}",
+        "message": "=<html><body style=\"font-family:Arial,sans-serif;color:#333;max-width:600px;margin:auto;padding:20px;\"><h2 style=\"color:#2e75b6;\">Following Up On Your Inquiry 📋</h2><p>Dear <strong>{{ $('Code - Parse AI Score').item.json.fullName }}</strong>,</p><p>We wanted to follow up on your recent inquiry about <strong>{{ $('Code - Parse AI Score').item.json.requirement }}</strong>.</p><ul><li>✅ Fast delivery</li><li>✅ Dedicated support</li><li>✅ Competitive pricing</li></ul><p>Would you like to schedule a quick call?</p><p style=\"color:#888;font-size:12px;\">Automated follow-up.</p></body></html>",
+        "options": {}
+      },
+      "id": "527ea115-1d2d-4794-9dc6-7aad24087727",
+      "name": "Gmail - Email 2 Follow Up (Day 3)",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        3808,
+        624
+      ],
+      "webhookId": "c0940c38-5f31-49bf-a251-703a321ff8f7",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "gU8lbcMJEtRoLlTS",
+          "name": "Gmail account MTK"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "amount": 4,
+        "unit": "days"
+      },
+      "id": "9a81bb95-43ae-4ef1-a040-f05802b3e4e5",
+      "name": "Wait - 4 More Days",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        4032,
+        624
+      ],
+      "webhookId": "d7a6ff88-cf6f-40ec-a732-d91fbd32f6e8"
+    },
+    {
+      "parameters": {
+        "resource": "custom",
+        "customResource": "crm.lead",
+        "operation": "getAll",
+        "limit": 1,
+        "options": {
+          "fieldsList": [
+            "id",
+            "stage_id",
+            "probability",
+            "active"
+          ]
+        },
+        "filterRequest": {
+          "filter": [
+            {
+              "fieldName": "email_from",
+              "value": "={{ $('Code - Parse AI Score').item.json.email }}"
+            }
+          ]
+        }
+      },
+      "id": "68321186-d1aa-492f-95e7-abe0a8597457",
+      "name": "Odoo - Check Lead Status (Day 7)",
+      "type": "n8n-nodes-base.odoo",
+      "typeVersion": 1,
+      "position": [
+        4256,
+        624
+      ],
+      "credentials": {
+        "odooApi": {
+          "id": "1ghSWW2g3VYDQNPV",
+          "name": "Odoo account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const leads = $input.all();\nlet shouldStop = false;\nlet status = 'Active';\nif (leads.length === 0) {\n  shouldStop = false; status = 'Not Found';\n} else {\n  const lead = leads[0].json;\n  if (lead.probability >= 100) { shouldStop = true; status = 'Won'; }\n  else if (lead.active === false) { shouldStop = true; status = 'Lost'; }\n  else { shouldStop = false; status = 'Active'; }\n}\nreturn [{ json: { shouldStop, status, email: $('Code - Parse AI Score').item.json.email, fullName: $('Code - Parse AI Score').item.json.fullName } }];"
+      },
+      "id": "324245ec-01e9-4fbe-bb78-7689eb9181e2",
+      "name": "Code - Parse Lead Status (Day 7)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4480,
+        624
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "stop-cond-d7",
+              "leftValue": "={{ $json.shouldStop }}",
+              "rightValue": false,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "e4962919-c942-497a-a944-7018ddd1e88a",
+      "name": "IF - Continue Emails? (Day 7)",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        4704,
+        624
+      ]
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $('Code - Parse AI Score').item.json.email }}",
+        "subject": "=See how we helped businesses like yours - {{ $('Code - Parse AI Score').item.json.company }}",
+        "message": "=<html><body style=\"font-family:Arial,sans-serif;color:#333;max-width:600px;margin:auto;padding:20px;\"><h2 style=\"color:#2e75b6;\">Success Story For You 🌟</h2><p>Dear <strong>{{ $('Code - Parse AI Score').item.json.fullName }}</strong>,</p><p>We helped a company similar to <strong>{{ $('Code - Parse AI Score').item.json.company }}</strong> increase lead conversion by 40%.</p><p>Let us show you a free demo — no commitment required!</p><p style=\"color:#888;font-size:12px;\">Automated email.</p></body></html>",
+        "options": {}
+      },
+      "id": "8eafb925-ceae-42dd-9727-b7ffbddb10e3",
+      "name": "Gmail - Email 3 Value Add (Day 7)",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        4928,
+        624
+      ],
+      "webhookId": "1b7405a2-a5fc-48ce-8091-93ad58e108a5",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "gU8lbcMJEtRoLlTS",
+          "name": "Gmail account MTK"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "amount": 7,
+        "unit": "days"
+      },
+      "id": "e5b2d6b7-1207-49e5-8eae-96f6e71a46d4",
+      "name": "Wait - 7 More Days",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        5152,
+        624
+      ],
+      "webhookId": "010c7e64-8f07-4604-9dc0-9e4e25fcc805"
+    },
+    {
+      "parameters": {
+        "resource": "custom",
+        "customResource": "crm.lead",
+        "operation": "getAll",
+        "limit": 1,
+        "options": {
+          "fieldsList": [
+            "id",
+            "stage_id",
+            "probability",
+            "active"
+          ]
+        },
+        "filterRequest": {
+          "filter": [
+            {
+              "fieldName": "email_from",
+              "value": "={{ $('Code - Parse AI Score').item.json.email }}"
+            }
+          ]
+        }
+      },
+      "id": "d6bbda09-3396-421a-a2ae-da02cf721bb3",
+      "name": "Odoo - Check Lead Status (Day 14)",
+      "type": "n8n-nodes-base.odoo",
+      "typeVersion": 1,
+      "position": [
+        5376,
+        624
+      ],
+      "credentials": {
+        "odooApi": {
+          "id": "1ghSWW2g3VYDQNPV",
+          "name": "Odoo account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const leads = $input.all();\nlet shouldStop = false;\nlet status = 'Active';\nif (leads.length === 0) {\n  shouldStop = false; status = 'Not Found';\n} else {\n  const lead = leads[0].json;\n  if (lead.probability >= 100) { shouldStop = true; status = 'Won'; }\n  else if (lead.active === false) { shouldStop = true; status = 'Lost'; }\n  else { shouldStop = false; status = 'Active'; }\n}\nreturn [{ json: { shouldStop, status, email: $('Code - Parse AI Score').item.json.email, fullName: $('Code - Parse AI Score').item.json.fullName } }];"
+      },
+      "id": "660f1191-b32c-4705-b15d-aa5141f0e79d",
+      "name": "Code - Parse Lead Status (Day 14)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        5600,
+        624
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "stop-cond-d14",
+              "leftValue": "={{ $json.shouldStop }}",
+              "rightValue": false,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "ab060cba-e5d9-4a2c-b6a6-01cdb5a56ce2",
+      "name": "IF - Continue Emails? (Day 14)",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        5824,
+        624
+      ]
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $('Code - Parse AI Score').item.json.email }}",
+        "subject": "=Last follow up - Free consultation for {{ $('Code - Parse AI Score').item.json.fullName }}",
+        "message": "=<html><body style=\"font-family:Arial,sans-serif;color:#333;max-width:600px;margin:auto;padding:20px;\"><h2 style=\"color:#2e75b6;\">One Last Message 💌</h2><p>Dear <strong>{{ $('Code - Parse AI Score').item.json.fullName }}</strong>,</p><p>This is our final follow-up. We are offering a <strong>FREE 30-minute consultation</strong> exclusively for you!</p><p>Reply with a time that works for you.</p><p style=\"color:#888;font-size:12px;\">This is our final automated email.</p></body></html>",
+        "options": {}
+      },
+      "id": "a2293347-5503-4dde-ab4b-43edc3dcb5c2",
+      "name": "Gmail - Email 4 Final (Day 14)",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        6048,
+        624
+      ],
+      "webhookId": "b91da4a7-d390-481d-acaa-c0ff07203e85",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "gU8lbcMJEtRoLlTS",
+          "name": "Gmail account MTK"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const err = $input.first().json;\nconst errorTime = new Date().toISOString();\nconsole.error('Workflow Error:', JSON.stringify(err));\nreturn [{ json: { errorTime, error: JSON.stringify(err), status: 'FAILED' } }];"
+      },
+      "id": "181190c5-df5d-4900-a06c-9a718ef48e63",
+      "name": "Code - Error Handler",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2016,
+        912
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "sendTo": "=mtkhannn0@gmail.com",
+        "subject": "=⚠️ WORKFLOW ERROR — Lead Management System",
+        "message": "=<html><body style=\"font-family:Arial,sans-serif;color:#333;max-width:600px;margin:auto;padding:20px;\"><h2 style=\"color:#c0392b;\">⚠️ Workflow Error Detected!</h2><p><strong>Time:</strong> {{ $json.errorTime }}</p><p><strong>Error:</strong></p><pre style=\"background:#f5f5f5;padding:15px;border-radius:5px;\">{{ $json.error }}</pre><p style=\"color:#888;font-size:12px;\">Check n8n execution logs immediately.</p></body></html>",
+        "options": {}
+      },
+      "id": "7984f6ae-9ac2-4605-96ae-1ae06dcef22e",
+      "name": "Gmail - Admin Error Alert",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        2240,
+        912
+      ],
+      "webhookId": "eab74191-be3b-4e24-a5d8-068c90bba6a4",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "gU8lbcMJEtRoLlTS",
+          "name": "Gmail account MTK"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $input.first().json;\n// Agar id nahi hai ya empty hai — naya lead hai\nconst isDuplicate = data.id !== undefined && data.id !== null && data.id !== '';\nreturn [{ json: { isDuplicate, id: data.id || null } }];"
+      },
+      "id": "e2d1f52d-81f4-4c9c-b9a1-cd1c43ddfceb",
+      "name": "Code - Check Duplicate",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        544,
+        624
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "custom",
+        "customResource": "crm.lead",
+        "operation": "getAll",
+        "limit": 1,
+        "options": {
+          "fieldsList": [
+            "id",
+            "email_from"
+          ]
+        },
+        "filterRequest": {
+          "filter": [
+            {
+              "fieldName": "email_from",
+              "value": "={{ $json.body?.email || $json.email }}"
+            }
+          ]
+        }
+      },
+      "id": "18c8904e-9746-4fa1-aa79-983a95ed6c59",
+      "name": "Odoo - Duplicate Email Check1",
+      "type": "n8n-nodes-base.odoo",
+      "typeVersion": 1,
+      "position": [
+        320,
+        624
+      ],
+      "alwaysOutputData": true,
+      "credentials": {
+        "odooApi": {
+          "id": "1ghSWW2g3VYDQNPV",
+          "name": "Odoo account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "dup-cond",
+              "leftValue": "={{ $json.isDuplicate }}",
+              "rightValue": false,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "b925516b-5260-44b7-984e-6d6dc35ccf0f",
+      "name": "IF - New Lead? (No Duplicate)1",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        768,
+        624
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "lead-intake",
+        "authentication": "headerAuth",
+        "options": {}
+      },
+      "id": "55623c67-7279-466a-a028-778589194fa0",
+      "name": "Webhook - Receive Lead",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        96,
+        624
+      ],
+      "webhookId": "lead-intake-001",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "bMQa9xs49RvPfV7n",
+          "name": "Header Auth account 3"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Code - Format & Validate Data": {
+      "main": [
+        [
+          {
+            "node": "OpenAI - AI Lead Scoring",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI - AI Lead Scoring": {
+      "main": [
+        [
+          {
+            "node": "Code - Parse AI Score",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code - Parse AI Score": {
+      "main": [
+        [
+          {
+            "node": "Odoo - Create Lead in CRM",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Odoo - Create Lead in CRM": {
+      "main": [
+        [
+          {
+            "node": "IF - Is Hot Lead?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Code - Error Handler",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF - Is Hot Lead?": {
+      "main": [
+        [
+          {
+            "node": "Set - Hot Lead Message",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "IF - Is Warm Lead?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF - Is Warm Lead?": {
+      "main": [
+        [
+          {
+            "node": "Set - Warm Lead Message",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Set - Cold Lead Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set - Hot Lead Message": {
+      "main": [
+        [
+          {
+            "node": "Gmail - Email to Sales Rep",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Twilio - WhatsApp to Sales Rep",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Gmail - Email 1 Confirmation to Customer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set - Warm Lead Message": {
+      "main": [
+        [
+          {
+            "node": "Gmail - Email to Sales Rep",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Twilio - WhatsApp to Sales Rep",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Gmail - Email 1 Confirmation to Customer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set - Cold Lead Message": {
+      "main": [
+        [
+          {
+            "node": "Gmail - Email to Sales Rep",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Twilio - WhatsApp to Sales Rep",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Gmail - Email 1 Confirmation to Customer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gmail - Email 1 Confirmation to Customer": {
+      "main": [
+        [
+          {
+            "node": "Wait - 3 Days",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait - 3 Days": {
+      "main": [
+        [
+          {
+            "node": "Odoo - Check Lead Status (Day 3)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Odoo - Check Lead Status (Day 3)": {
+      "main": [
+        [
+          {
+            "node": "Code - Parse Lead Status (Day 3)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code - Parse Lead Status (Day 3)": {
+      "main": [
+        [
+          {
+            "node": "IF - Continue Emails? (Day 3)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF - Continue Emails? (Day 3)": {
+      "main": [
+        [
+          {
+            "node": "Gmail - Email 2 Follow Up (Day 3)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gmail - Email 2 Follow Up (Day 3)": {
+      "main": [
+        [
+          {
+            "node": "Wait - 4 More Days",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait - 4 More Days": {
+      "main": [
+        [
+          {
+            "node": "Odoo - Check Lead Status (Day 7)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Odoo - Check Lead Status (Day 7)": {
+      "main": [
+        [
+          {
+            "node": "Code - Parse Lead Status (Day 7)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code - Parse Lead Status (Day 7)": {
+      "main": [
+        [
+          {
+            "node": "IF - Continue Emails? (Day 7)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF - Continue Emails? (Day 7)": {
+      "main": [
+        [
+          {
+            "node": "Gmail - Email 3 Value Add (Day 7)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gmail - Email 3 Value Add (Day 7)": {
+      "main": [
+        [
+          {
+            "node": "Wait - 7 More Days",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait - 7 More Days": {
+      "main": [
+        [
+          {
+            "node": "Odoo - Check Lead Status (Day 14)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Odoo - Check Lead Status (Day 14)": {
+      "main": [
+        [
+          {
+            "node": "Code - Parse Lead Status (Day 14)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code - Parse Lead Status (Day 14)": {
+      "main": [
+        [
+          {
+            "node": "IF - Continue Emails? (Day 14)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF - Continue Emails? (Day 14)": {
+      "main": [
+        [
+          {
+            "node": "Gmail - Email 4 Final (Day 14)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code - Error Handler": {
+      "main": [
+        [
+          {
+            "node": "Gmail - Admin Error Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code - Check Duplicate": {
+      "main": [
+        [
+          {
+            "node": "IF - New Lead? (No Duplicate)1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Odoo - Duplicate Email Check1": {
+      "main": [
+        [
+          {
+            "node": "Code - Check Duplicate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF - New Lead? (No Duplicate)1": {
+      "main": [
+        [
+          {
+            "node": "Code - Format & Validate Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook - Receive Lead": {
+      "main": [
+        [
+          {
+            "node": "Odoo - Duplicate Email Check1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": false,
+    "timeSavedMode": "fixed",
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "versionId": "2fe2ede8-bb56-4b03-971c-d7e98dadb7b4",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "f3ea4b3b1af91f7cdcb29d6c1b5ed067ec80771b0665b888848e0d76a943f98c"
+  },
+  "id": "dnxwlTwQ757fa4PoVPeFb",
+  "tags": []
+}
